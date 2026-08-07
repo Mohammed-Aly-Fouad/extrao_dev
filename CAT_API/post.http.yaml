@@ -1,0 +1,11 @@
+method: post
+url: http://localhost:3000/with_state
+requestBody:
+  type: application/json
+  data: "{\r
+
+    \    \"name\": \"Mohammed\",\r
+
+    \    \"email\": \"mo@gm.com\"\r
+
+    }"

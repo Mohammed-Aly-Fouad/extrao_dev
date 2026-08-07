@@ -1,0 +1,105 @@
+use core::task;
+
+use axum::extract::{ Path, State};
+use axum::http::{StatusCode};
+use axum::response::IntoResponse;
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
+use sqlx::{PgPool};
+use tokio::net::TcpListener;
+
+
+#[derive(Clone)]
+struct AppState {
+    db: PgPool,
+}
+
+#[derive(Serialize)]
+struct Task {
+    id: i32,
+    title: String,
+    completed: bool,
+}
+
+#[derive(Deserialize)]
+struct CreateTask {
+    title: String,
+}
+
+async fn create_task(
+    State(app_state): State<AppState>,
+    Json(payload): Json<CreateTask>
+) -> Result<Json<Task>, (StatusCode, String)> {
+    let data_result = sqlx::query_as!(
+        Task,
+        r#"INSERT INTO tasks (title) VALUES ($1) RETURNING id, title, completed"#,
+        payload.title,
+    ).fetch_one(&app_state.db)
+    .await;
+    
+    match data_result {
+        Ok(task) => Ok(Json(task)),
+        Err(_) => Err((StatusCode::INTERNAL_SERVER_ERROR, String::from("Failed to create a task")))
+    }
+}
+
+async fn list_tasks(
+    State(app_state): State<AppState>
+
+) -> Json<Vec<Task>> {
+    let data_result = sqlx::query_as!(
+        Task,
+        r#"SELECT id, title, completed FROM tasks ORDER By id"#
+    )
+    .fetch_all(&app_state.db).await;
+
+    match data_result {
+        Ok(tasks) => Json(tasks),
+        Err(_) => Json(Vec::new())
+    }
+}
+async fn get_task(
+    State(app_state): State<AppState>,
+    Path(id): Path<i32>
+
+) -> Result<Json<Task>, String> {
+    let data_result = sqlx::query_as!(
+        Task,
+        r#"SELECT id, title, completed FROM tasks WHERE id=$1 ORDER By id"#,
+        id
+    )
+    .fetch_one(&app_state.db).await;
+
+    match data_result {
+    Ok(task) => Ok(Json(task)),
+    Err(_) => Err(String::from("Failed to fetch task")),
+}
+}
+#[tokio::main]
+async fn main() {
+
+    dotenvy::dotenv().ok();
+
+    let databas_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set in.env file");
+
+    let db_pool = sqlx::PgPool::connect(&databas_url)
+    .await
+    .expect("Failed to create pool...");
+
+    
+    let app_state = AppState {
+        db: db_pool,
+    };
+    
+    let app = Router::new()
+    .route("/tasks", get(list_tasks))
+    .route("/tasks", post(create_task))
+    .route("/tasks/{id}", get(get_task))
+    .with_state(app_state);
+
+    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    println!("Server running on http://localhost:3000");
+
+    axum::serve(listener, app).await.unwrap();
+}
