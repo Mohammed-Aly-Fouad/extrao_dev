@@ -1,0 +1,5 @@
+method: post
+url: http://localhost:3000/tasks
+requestBody:
+  type: application/json
+  data: "{\r\n    \"title\": \"Move\"\r\n}"

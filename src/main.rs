@@ -1,13 +1,12 @@
-use core::task;
-
 use axum::extract::{ Path, State};
 use axum::http::{StatusCode};
-use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool};
 use tokio::net::TcpListener;
+mod error;
+use error::AppError;
 
 
 #[derive(Clone)]
@@ -27,6 +26,11 @@ struct CreateTask {
     title: String,
 }
 
+#[derive(Deserialize)]
+struct UpdateTask {
+    title: Option<String>,
+    completed: Option<bool>,
+}
 async fn create_task(
     State(app_state): State<AppState>,
     Json(payload): Json<CreateTask>
@@ -76,6 +80,48 @@ async fn get_task(
     Err(_) => Err(String::from("Failed to fetch task")),
 }
 }
+
+async fn update_task(
+    State(app_state): State<AppState>,
+    Path(id): Path<i32>,
+    Json(payload): Json<UpdateTask>
+
+) -> Result<StatusCode, AppError> {
+    let updated = sqlx::query!(r#"
+    UPDATE tasks SET title = COALESCE($1, title), completed = COALESCE($2, completed) WHERE id = $3
+    "#,
+    payload.title,
+    payload.completed,
+    id)
+    .execute(&app_state.db)
+    .await?;
+    
+    if updated.rows_affected() > 0 {
+        Ok(StatusCode::OK)
+    } else {
+        Err(AppError::NotFound(format!("Task with id: {} nto found", id)))
+    }
+
+}
+
+async fn delete_task (
+    State(app_state): State<AppState>,
+    Path(id): Path<i32>
+) -> StatusCode {
+    let deleted = sqlx::query!(r#"DELETE FROM tasks WHERE id = $1"#, id)
+    .execute(&app_state.db)
+    .await;
+    match deleted {
+        Ok(result) => {
+            if result.rows_affected() > 0 {
+                StatusCode::OK
+            } else {
+                StatusCode::NOT_FOUND
+            }
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
 #[tokio::main]
 async fn main() {
 
@@ -96,6 +142,8 @@ async fn main() {
     .route("/tasks", get(list_tasks))
     .route("/tasks", post(create_task))
     .route("/tasks/{id}", get(get_task))
+    .route("/tasks/{id}", patch(update_task))
+    .route("/tasks/{id}", delete(delete_task))
     .with_state(app_state);
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
